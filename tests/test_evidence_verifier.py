@@ -100,3 +100,78 @@ def test_insufficient_evidence_removes_cause(context):
     assert result.report.possible_cause is None
     assert result.report.confidence == "low"
     assert result.report.insufficient_evidence is True
+
+
+def test_unrelated_auth_warnings_force_abstention():
+    context = {
+        "incident": {
+            "id": "incident-auth",
+            "incident_type": "high_error_rate",
+        },
+        "evidence": [
+            {
+                "evidence_id": 1,
+                "level": "WARNING",
+                "message": "Invalid login credentials",
+            },
+            {
+                "evidence_id": 2,
+                "level": "WARNING",
+                "message": "Authentication token expired",
+            },
+        ],
+    }
+
+    report = InvestigationReport(
+        summary="Authentication errors caused failures",
+        possible_cause=(
+            "Authentication errors may be causing 5xx"
+        ),
+        confidence="medium",
+        evidence_ids=[1, 2],
+        next_steps=["Inspect authentication"],
+        insufficient_evidence=False,
+    )
+
+    result = EvidenceVerifier().verify(report, context)
+
+    assert result.report.insufficient_evidence is True
+    assert result.report.possible_cause is None
+    assert result.report.confidence == "low"
+    assert result.report.evidence_ids == []
+    assert result.requires_human_review is True
+
+
+def test_server_error_evidence_not_blocked():
+    context = {
+        "incident": {
+            "id": "incident-db",
+            "incident_type": "high_error_rate",
+        },
+        "evidence": [
+            {
+                "evidence_id": 1,
+                "level": "WARNING",
+                "message": "Invalid login credentials",
+            },
+            {
+                "evidence_id": 2,
+                "level": "ERROR",
+                "message": "HTTP 500 database connection failed",
+            },
+        ],
+    }
+
+    report = InvestigationReport(
+        summary="Server errors and database issues detected",
+        possible_cause="Possible database connectivity issue",
+        confidence="medium",
+        evidence_ids=[2],
+        next_steps=["Inspect database connectivity"],
+        insufficient_evidence=False,
+    )
+
+    result = EvidenceVerifier().verify(report, context)
+
+    assert result.report.insufficient_evidence is False
+    assert result.report.evidence_ids == [2]

@@ -14,6 +14,39 @@ class VerificationResult(BaseModel):
     requires_human_review: bool
 
 
+AUTH_ONLY_WARNING_MARKERS = (
+    "invalid login credentials",
+    "authentication token expired",
+    "invalid password",
+    "invalid credentials",
+    "expired authentication token",
+)
+
+
+def authentication_warnings_only(
+    context: dict[str, Any],
+) -> bool:
+    """Identify authentication-only warnings for 5xx incidents."""
+
+    incident = context.get("incident") or {}
+    evidence = context.get("evidence") or []
+
+    if incident.get("incident_type") != "high_error_rate":
+        return False
+
+    if not evidence:
+        return False
+
+    return all(
+        str(log.get("level", "")).upper()
+        in {"WARNING", "WARN"}
+        and any(
+            marker in str(log.get("message", "")).lower()
+            for marker in AUTH_ONLY_WARNING_MARKERS
+        )
+        for log in evidence
+    )
+
 class EvidenceVerifier:
     """Apply deterministic safeguards to AI investigations."""
 
@@ -69,6 +102,43 @@ class EvidenceVerifier:
                 warnings=warnings,
                 requires_human_review=True,
             )
+
+        # Authentication warnings alone do not explain
+        # an incident measured using HTTP 5xx responses.
+        if authentication_warnings_only(context):
+            warnings.append(
+                "Only authentication warnings were found; "
+                "they do not establish the cause of HTTP "
+                "5xx failures."
+            )
+
+            safe_report = InvestigationReport(
+                summary=(
+                    "HTTP 5xx error rate is elevated, "
+                    "but the available authentication "
+                    "warnings do not explain the failures."
+                ),
+                possible_cause=None,
+                confidence="low",
+                evidence_ids=[],
+                next_steps=[
+                    "Inspect HTTP 5xx request logs.",
+                    "Check application exceptions and "
+                    "server-side failures.",
+                    "Correlate failing endpoints with "
+                    "dependency and database metrics.",
+                ],
+                insufficient_evidence=True,
+            )
+
+            return VerificationResult(
+                report=safe_report,
+                citation_ids_valid=True,
+                verified_evidence_ids=[],
+                warnings=warnings,
+                requires_human_review=True,
+            )
+
 
         # A valid citation does not prove causality.
         # Conservatively cap model confidence.
