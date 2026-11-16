@@ -147,15 +147,21 @@ def evaluate_live_incidents():
     with processing_lock:
         events = manager.process_metrics(metrics)
 
+        
         for event in events:
             attach_log_evidence(event, logs)
-            repository.save(event["incident"])
+
+            repository.save(
+            incident=event["incident"],
+            evidence=event.get("correlated_logs", []),
+            )
 
         return {
             "metrics": metrics,
             "events": events,
             "active_incidents": repository.list_active(),
         }
+
 
 @router.get("/{incident_id}")
 def get_incident(incident_id: str):
@@ -167,4 +173,11 @@ def get_incident(incident_id: str):
             detail="Incident not found",
         )
 
-    return incident
+    evidence = repository.list_evidence(incident_id)
+
+    return {
+        **incident,
+        "correlated_logs": evidence,
+        "correlated_log_count": len(evidence),
+    }
+

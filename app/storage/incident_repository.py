@@ -1,6 +1,5 @@
 
 import sqlite3
-from pathlib import Path
 
 from app.detection.incident_manager import ManagedIncident
 from app.detection.rules import Severity
@@ -14,6 +13,7 @@ class IncidentRepository:
     def connect(self):
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     def initialize(self):
@@ -46,7 +46,42 @@ class IncidentRepository:
                 WHERE status = 'active'
             """)
 
-    def save(self, incident: dict):
+            # New table for correlated log evidence
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS incident_evidence (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    incident_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    seconds_from_incident REAL NOT NULL,
+
+                    FOREIGN KEY (incident_id)
+                        REFERENCES incidents(id),
+
+                    UNIQUE (
+                        incident_id,
+                        timestamp,
+                        level,
+                        message
+                    )
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS
+                idx_evidence_incident
+                ON incident_evidence(incident_id)
+            """)
+
+    def save(self, incident: dict, evidence=None):
+        """
+        Upsert an incident and save its log evidence
+        in one SQLite transaction.
+        """
+        if evidence is None:
+            evidence = []
+
         with self.connect() as conn:
             conn.execute("""
                 INSERT INTO incidents (
@@ -55,6 +90,7 @@ class IncidentRepository:
                     updated_at, resolved_at, occurrences
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
                 ON CONFLICT(id) DO UPDATE SET
                     severity = excluded.severity,
                     status = excluded.status,
@@ -76,12 +112,31 @@ class IncidentRepository:
                 incident["occurrences"],
             ))
 
+            for log in evidence:
+                conn.execute("""
+                    INSERT OR IGNORE INTO incident_evidence (
+                        incident_id,
+                        timestamp,
+                        level,
+                        message,
+                        seconds_from_incident
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    incident["id"],
+                    log["timestamp"],
+                    log["level"],
+                    log["message"],
+                    log["seconds_from_incident"],
+                ))
+
     def list_all(self):
         with self.connect() as conn:
             rows = conn.execute("""
                 SELECT * FROM incidents
                 ORDER BY created_at DESC
             """).fetchall()
+
             return [dict(row) for row in rows]
 
     def list_active(self):
@@ -91,6 +146,7 @@ class IncidentRepository:
                 WHERE status = 'active'
                 ORDER BY created_at DESC
             """).fetchall()
+
             return [dict(row) for row in rows]
 
     def get_by_id(self, incident_id: str):
@@ -99,7 +155,26 @@ class IncidentRepository:
                 "SELECT * FROM incidents WHERE id = ?",
                 (incident_id,),
             ).fetchone()
+
             return dict(row) if row else None
+
+    def list_evidence(self, incident_id: str):
+        """Retrieve permanently stored incident evidence."""
+        with self.connect() as conn:
+            rows = conn.execute("""
+                SELECT
+                    id,
+                    incident_id,
+                    timestamp,
+                    level,
+                    message,
+                    seconds_from_incident
+                FROM incident_evidence
+                WHERE incident_id = ?
+                ORDER BY timestamp DESC, id DESC
+            """, (incident_id,)).fetchall()
+
+            return [dict(row) for row in rows]
 
     def load_manager_state(self, manager):
         """Restore active incidents after a restart."""
