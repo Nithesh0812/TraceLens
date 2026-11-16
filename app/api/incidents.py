@@ -18,6 +18,10 @@ from app.detection.log_correlator import correlate_logs
 from app.detection.incident_detector import Incident
 from app.detection.rules import Severity
 
+from app.investigation.context_builder import (InvestigationContextBuilder,IncidentNotFoundError,)
+from app.investigation.llm_client import (LLMInvestigator,LLMInvestigationError,)
+from app.investigation.evidence_verifier import (EvidenceVerifier,VerificationResult,)
+
 router = APIRouter(
     prefix="/incidents",
     tags=["Incidents"],
@@ -181,3 +185,52 @@ def get_incident(incident_id: str):
         "correlated_log_count": len(evidence),
     }
 
+
+@router.post(
+    "/{incident_id}/investigate",
+    response_model=VerificationResult,
+)
+def investigate_incident(incident_id: str):
+    """
+    Build context, investigate with an LLM,
+    and verify the resulting report.
+    """
+    builder = InvestigationContextBuilder(repository)
+
+    try:
+        context = builder.build(incident_id)
+    except IncidentNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        ) from exc
+
+    investigator = LLMInvestigator()
+
+    try:
+        report = investigator.investigate(context)
+    except LLMInvestigationError as exc:
+        message = str(exc)
+
+        if "not configured" in message:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM provider is not configured",
+            ) from exc
+
+        raise HTTPException(
+            status_code=502,
+            detail="LLM investigation failed",
+        ) from exc
+
+    verifier = EvidenceVerifier()
+
+    try:
+        result = verifier.verify(report, context)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Investigation verification failed",
+        ) from exc
+
+    return result
