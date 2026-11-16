@@ -37,9 +37,20 @@ def mock_client(report):
         body = json.loads(request.content)
 
         assert body["model"] == "test-model"
-        assert body["response_format"] == {
-            "type": "json_object"
-        }
+        
+        response_format = body["response_format"]
+
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["strict"] is True
+
+        schema = response_format["json_schema"]["schema"]
+
+        assert schema["properties"]["confidence"]["enum"] == [
+            "low", "medium", "high"
+        ]
+
+        assert schema["properties"]["next_steps"]["type"] == "array"
+        assert schema["additionalProperties"] is False
 
         return httpx.Response(
             200,

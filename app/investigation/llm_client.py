@@ -110,9 +110,50 @@ class LLMInvestigator:
                     ),
                 },
             ],
-            "response_format": {
-                "type": "json_object"
-            },
+            
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "investigation_report",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string"
+                        },
+                        "possible_cause": {
+                            "type": ["string", "null"]
+                        },
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"]
+                        },
+                        "evidence_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"}
+                        },
+                        "next_steps": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "insufficient_evidence": {
+                            "type": "boolean"
+                        }
+                    },
+                    "required": [
+                        "summary",
+                        "possible_cause",
+                        "confidence",
+                        "evidence_ids",
+                        "next_steps",
+                        "insufficient_evidence"
+                    ],
+                    "additionalProperties": False
+                }
+            }
+        },
+
         }
 
         try:
