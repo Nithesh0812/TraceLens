@@ -86,6 +86,20 @@ class IncidentRepository:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fix_proposals (
+                    incident_id TEXT PRIMARY KEY,
+                    proposal_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+
+                    FOREIGN KEY (incident_id)
+                        REFERENCES incidents(id)
+                        ON DELETE CASCADE
+                )
+            """)
+
+
     def save(self, incident: dict, evidence=None):
         """
         Upsert an incident and save its log evidence
@@ -125,7 +139,7 @@ class IncidentRepository:
             ))
 
             for log in evidence:
-                conn.execute("""
+                cursor = conn.execute("""
                     INSERT OR IGNORE INTO incident_evidence (
                         incident_id,
                         timestamp,
@@ -141,6 +155,15 @@ class IncidentRepository:
                     log["message"],
                     log["seconds_from_incident"],
                 ))
+
+                # Invalidate old proposals if new
+                # evidence was actually inserted.
+                if cursor.rowcount > 0:
+                    conn.execute("""
+                        DELETE FROM fix_proposals
+                        WHERE incident_id = ?
+                    """, (incident["id"],))
+
 
     def list_all(self):
         with self.connect() as conn:
@@ -236,6 +259,14 @@ class IncidentRepository:
                 timestamp,
             ))
 
+            # Any newly saved investigation invalidates
+            # the previously proposed remediation.
+            conn.execute("""
+                DELETE FROM fix_proposals
+                WHERE incident_id = ?
+            """, (incident_id,))
+
+
 
     def get_investigation(self, incident_id: str):
         """Retrieve the saved investigation for an incident."""
@@ -251,3 +282,100 @@ class IncidentRepository:
                 return None
 
             return json.loads(row["report_json"])
+
+    def save_fix_proposal(
+        self,
+        incident_id: str,
+        proposal: dict,
+        *,
+        expected_investigation: dict,
+        expected_evidence_ids: list[int],
+    ):
+        """Save only if the investigation and evidence are unchanged."""
+
+        if (
+            proposal.get("incident_id") != incident_id
+            or proposal.get("status") != "proposed"
+            or proposal.get("proposal") is None
+            or proposal.get("requires_human_review") is not True
+        ):
+            raise ValueError("Invalid fix proposal")
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        with self.connect() as conn:
+            # Serialize writes while checking the current snapshot.
+            conn.execute("BEGIN IMMEDIATE")
+
+            investigation = conn.execute("""
+                SELECT report_json
+                FROM investigations
+                WHERE incident_id = ?
+            """, (incident_id,)).fetchone()
+
+            if (
+                investigation is None
+                or json.loads(investigation["report_json"])
+                != expected_investigation
+            ):
+                raise ValueError(
+                    "Investigation changed during proposal generation"
+                )
+
+            rows = conn.execute("""
+                SELECT id FROM incident_evidence
+                WHERE incident_id = ?
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 20
+            """, (incident_id,)).fetchall()
+
+            current_evidence_ids = [
+                row["id"] for row in rows
+            ]
+
+            if current_evidence_ids != expected_evidence_ids:
+                raise ValueError(
+                    "Incident evidence changed during generation"
+                )
+
+            conn.execute("""
+                INSERT INTO fix_proposals (
+                    incident_id,
+                    proposal_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(incident_id) DO UPDATE SET
+                    proposal_json = excluded.proposal_json,
+                    updated_at = excluded.updated_at
+            """, (
+                incident_id,
+                json.dumps(proposal),
+                timestamp,
+                timestamp,
+            ))
+
+    def get_fix_proposal(self, incident_id: str):
+        """Retrieve a previously saved fix proposal."""
+
+        with self.connect() as conn:
+            row = conn.execute("""
+                SELECT proposal_json
+                FROM fix_proposals
+                WHERE incident_id = ?
+            """, (incident_id,)).fetchone()
+
+            if row is None:
+                return None
+
+            return json.loads(row["proposal_json"])
+
+    def delete_fix_proposal(self, incident_id: str):
+        """Invalidate a saved fix proposal."""
+
+        with self.connect() as conn:
+            conn.execute("""
+                DELETE FROM fix_proposals
+                WHERE incident_id = ?
+            """, (incident_id,))

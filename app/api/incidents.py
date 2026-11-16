@@ -5,7 +5,7 @@ import httpx
 from threading import Lock
 
 from fastapi import APIRouter, HTTPException,Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field,ValidationError
 
 from app.detection.incident_manager import IncidentManager
 from app.storage.incident_repository import IncidentRepository
@@ -18,6 +18,17 @@ from app.investigation.context_builder import (InvestigationContextBuilder,Incid
 from app.investigation.llm_client import (LLMInvestigator,LLMInvestigationError,)
 from app.investigation.evidence_verifier import (EvidenceVerifier,VerificationResult,)
 from app.api.schemas import IncidentListResponse
+
+from pydantic import ValidationError
+
+from app.investigation.evidence_verifier import VerificationResult
+
+from app.remediation.proposal_generator import (
+    FixProposalGenerator,
+    FixProposalError,
+)
+from app.remediation.proposal_verifier import FixProposalVerifier
+from app.remediation.schemas import FixProposalResult
 
 router = APIRouter(
     prefix="/incidents",
@@ -266,3 +277,189 @@ def get_saved_investigation(incident_id: str):
         )
 
     return investigation
+
+
+@router.post(
+    "/{incident_id}/propose-fix",
+    response_model=FixProposalResult,
+)
+def propose_incident_fix(incident_id: str):
+    """
+    Generate and verify an advisory remediation proposal.
+
+    This endpoint never executes remediation actions.
+    """
+
+    # Step 1: Verify incident exists.
+    incident = repository.get_by_id(incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    # Step 2: Retrieve previously verified investigation.
+    saved_investigation = repository.get_investigation(
+        incident_id
+    )
+
+    if saved_investigation is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Incident must be investigated "
+                "before generating a fix proposal"
+            ),
+        )
+
+    # Step 3: Validate the persisted investigation.
+    try:
+        investigation = VerificationResult.model_validate(
+            saved_investigation
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Saved investigation is invalid",
+        ) from exc
+
+    # Step 4: Build current incident evidence context.
+    builder = InvestigationContextBuilder(repository)
+
+    context = builder.build(incident_id)
+
+    # Step 5: Reject stale or mismatched citations.
+    context_ids = {
+        item["evidence_id"]
+        for item in context["evidence"]
+    }
+
+    verified_ids = set(
+        investigation.verified_evidence_ids
+    )
+
+    if (
+        investigation.report.insufficient_evidence
+        or investigation.report.possible_cause is None
+        or not investigation.citation_ids_valid
+        or not verified_ids
+    ):
+        return FixProposalResult(
+            incident_id=incident_id,
+            status="needs_more_evidence",
+            proposal=None,
+            warnings=[
+                "The saved investigation does not "
+                "support a specific remediation."
+            ],
+            requires_human_review=True,
+        )
+
+    if (
+        not verified_ids.issubset(context_ids)
+        or not set(
+            investigation.report.evidence_ids
+        ).issubset(verified_ids)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Investigation evidence does not match "
+                "the current context. Re-investigate first."
+            ),
+        )
+
+    # Step 6: Generate advisory fix.
+    generator = FixProposalGenerator()
+
+    try:
+        proposal = generator.generate(
+            investigation,
+            context,
+        )
+    except FixProposalError as exc:
+        if "not configured" in str(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="LLM provider is not configured",
+            ) from exc
+
+        raise HTTPException(
+            status_code=502,
+            detail="Fix proposal generation failed",
+        ) from exc
+
+    # Step 7: Apply deterministic safety checks.
+    verifier = FixProposalVerifier()
+
+    result = verifier.verify(
+        incident_id=incident_id,
+        proposal=proposal,
+        investigation=investigation,
+        context=context,
+    )
+
+    # Save only verified proposals when the
+    # investigation and evidence remain unchanged.
+    if result.status == "proposed":
+        try:
+            repository.save_fix_proposal(
+                incident_id=incident_id,
+                proposal=result.model_dump(mode="json"),
+                expected_investigation=saved_investigation,
+                expected_evidence_ids=[
+                    item["evidence_id"]
+                    for item in context["evidence"]
+                ],
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Investigation or evidence changed. "
+                    "Regenerate the proposal."
+                ),
+            ) from exc
+    else:
+        repository.delete_fix_proposal(incident_id)
+
+    # No remediation actions are executed.
+    return result
+
+
+
+@router.get(
+    "/{incident_id}/fix-proposal",
+    response_model=FixProposalResult,
+)
+def get_saved_fix_proposal(incident_id: str):
+    """Retrieve the saved advisory remediation proposal."""
+
+    incident = repository.get_by_id(incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    saved_proposal = repository.get_fix_proposal(
+        incident_id
+    )
+
+    if saved_proposal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No fix proposal found for this incident",
+        )
+
+    try:
+        return FixProposalResult.model_validate(
+            saved_proposal
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Saved fix proposal is invalid",
+        ) from exc
