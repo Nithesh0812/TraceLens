@@ -8,14 +8,15 @@ from pydantic import BaseModel, Field
 from app.detection.incident_manager import IncidentManager
 from app.storage.incident_repository import IncidentRepository
 
-
 import httpx
 
-from app.services.metrics_service import (
-    get_request_rate,
-    get_error_rate,
-    get_average_latency,
-)
+from app.services.metrics_service import (get_request_rate,get_error_rate,get_average_latency,)
+import logging
+
+from app.ingestion.jobtracker_logs import read_jobtracker_logs
+from app.detection.log_correlator import correlate_logs
+from app.detection.incident_detector import Incident
+from app.detection.rules import Severity
 
 router = APIRouter(
     prefix="/incidents",
@@ -39,6 +40,39 @@ class MetricsInput(BaseModel):
         default=None, ge=0
     )
 
+
+def attach_log_evidence(event: dict, logs: list[dict]) -> dict:
+    """Attach time-correlated log evidence to an incident event."""
+
+    incident = event["incident"]
+
+    # Recovery events do not represent a newly detected problem.
+    if event["event"] == "resolved":
+        return event
+
+    detection = Incident(
+        incident_type=incident["incident_type"],
+        severity=Severity(incident["severity"]),
+        message=incident["message"],
+        metric_value=incident["metric_value"],
+        threshold=0.0,
+        detected_at=incident["updated_at"],
+    )
+
+    correlated = correlate_logs(
+        detection,
+        logs,
+        lookback_minutes=5,
+        lookahead_minutes=0,
+        max_logs=20,
+    )
+
+    event["correlated_logs"] = correlated["correlated_logs"]
+    event["correlated_log_count"] = (
+        correlated["correlated_log_count"]
+    )
+
+    return event
 
 @router.post("/evaluate")
 def evaluate_incidents(metrics: MetricsInput):
@@ -80,27 +114,41 @@ def active_incidents():
 
 @router.post("/evaluate-live")
 def evaluate_live_incidents():
-    """
-    Fetch metrics from Prometheus,
-    detect incidents, and persist lifecycle changes.
-    """
-
     try:
+        request_rate = get_request_rate()
+        error_percent = get_error_rate()
+        latency = get_average_latency()
+
         metrics = {
-            "request_rate": get_request_rate(),
-            "error_rate": get_error_rate(),
-            "average_latency_ms": get_average_latency(),
+            "request_rate": request_rate,
+            "error_rate": (
+                error_percent / 100.0
+                if error_percent is not None
+                else None
+            ),
+            "average_latency_ms": latency,
         }
+
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         raise HTTPException(
             status_code=503,
             detail="Prometheus metrics temporarily unavailable",
         ) from exc
 
+    # Read logs before modifying incident state.
+    try:
+        logs = read_jobtracker_logs()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="JobTracker logs temporarily unavailable",
+        ) from exc
+
     with processing_lock:
         events = manager.process_metrics(metrics)
 
         for event in events:
+            attach_log_evidence(event, logs)
             repository.save(event["incident"])
 
         return {
