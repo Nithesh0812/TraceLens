@@ -1,6 +1,5 @@
-
+import IncidentDetails from "./IncidentDetails";
 import { useCallback, useEffect, useRef, useState } from "react";
-
 import MetricCard from "./MetricCard";
 import {
   api,
@@ -12,6 +11,8 @@ const REFRESH_INTERVAL_MS = 10_000;
 
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
+  const [selectedIncidentId, setSelectedIncidentId] =
+  useState<string | null>(null);
   const [incidentData, setIncidentData] =
     useState<IncidentListResponse | null>(null);
 
@@ -272,10 +273,16 @@ export default function Dashboard() {
 
           <div className="space-y-3">
             {incidents.map((incident) => (
-              <div
+              <button
+                type="button"
                 key={incident.id}
-                className="rounded-lg border border-slate-800 bg-slate-950 p-4"
-              >
+                onClick={() => setSelectedIncidentId(incident.id)}
+                className={`w-full rounded-lg border bg-slate-950 p-4 text-left transition hover:border-blue-500 focus-visible:outline-2 focus-visible:outline-blue-400 ${
+                 selectedIncidentId === incident.id
+                 ? "border-blue-500"
+                 : "border-slate-800"
+                }`}
+                >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 className="font-medium capitalize">
                     {incident.incident_type.replaceAll("_", " ")}
@@ -307,11 +314,16 @@ export default function Dashboard() {
                     Occurrences: {incident.occurrences}
                   </span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </section>
-
+        {selectedIncidentId && (
+        <IncidentDetails
+        incidentId={selectedIncidentId}
+        onClose={() => setSelectedIncidentId(null)}
+        />
+        )}
         <footer className="text-center text-xs text-slate-600">
           TraceLens · Automatically refreshes every 10 seconds
         </footer>

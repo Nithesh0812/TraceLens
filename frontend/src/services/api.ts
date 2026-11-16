@@ -19,6 +19,21 @@ export interface Incident {
   occurrences: number;
 }
 
+
+export interface IncidentEvidence {
+  id: number;
+  incident_id: string;
+  timestamp: string;
+  level: string;
+  message: string;
+  seconds_from_incident: number;
+}
+
+export interface IncidentDetails extends Incident {
+  correlated_logs: IncidentEvidence[];
+  correlated_log_count: number;
+}
+
 export interface IncidentListResponse {
   incidents: Incident[];
   total: number;
@@ -44,7 +59,7 @@ export const api = {
     ),
 
   getIncident: (id: string) =>
-    getJson<Incident>(
+    getJson<IncidentDetails>(
       `/incidents/${encodeURIComponent(id)}`
     ),
 };
