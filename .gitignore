@@ -6,3 +6,7 @@ __pycache__/
 logs/
 *.log
 sample_logs/
+# Local SQLite database
+*.db
+*.db-shm
+*.db-wal
