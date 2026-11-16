@@ -35,6 +35,7 @@ async function handleApiError(
 
   const messages: Record<number, string> = {
     404: "The requested resource was not found.",
+    409: "The investigation is missing or outdated. Run a new investigation first.",
     429: "Too many requests. Please try again later.",
     502: "The AI investigation provider failed.",
     503: "A required backend service is unavailable.",
@@ -95,6 +96,26 @@ export interface VerificationResult {
   report: InvestigationReport;
   citation_ids_valid: boolean;
   verified_evidence_ids: number[];
+  warnings: string[];
+  requires_human_review: boolean;
+}
+
+export interface FixProposal {
+  title: string;
+  description: string;
+  rationale: string;
+  confidence: "low" | "medium" | "high";
+  risk_level: "low" | "medium" | "high";
+  evidence_ids: number[];
+  proposed_steps: string[];
+  validation_steps: string[];
+  rollback_steps: string[];
+}
+
+export interface FixProposalResult {
+  incident_id: string;
+  status: "proposed" | "needs_more_evidence";
+  proposal: FixProposal | null;
   warnings: string[];
   requires_human_review: boolean;
 }
@@ -178,4 +199,35 @@ runInvestigation: (
     `/incidents/${encodeURIComponent(incidentId)}/investigate`,
     signal
   ),
+
+
+  getFixProposal: async (
+    incidentId: string,
+    signal?: AbortSignal
+  ): Promise<FixProposalResult | null> => {
+    const response = await fetch(
+      `${API_BASE_URL}/incidents/${encodeURIComponent(incidentId)}/fix-proposal`,
+      { signal }
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      return handleApiError(response);
+    }
+
+    return response.json() as Promise<FixProposalResult>;
+  },
+
+  generateFixProposal: (
+    incidentId: string,
+    signal?: AbortSignal
+  ) =>
+    postJson<FixProposalResult>(
+      `/incidents/${encodeURIComponent(incidentId)}/propose-fix`,
+      signal
+    ),
+
 };

@@ -5,6 +5,9 @@ from app.detection.incident_manager import ManagedIncident
 from app.detection.rules import Severity
 
 
+# Increment whenever remediation verification rules change.
+FIX_PROPOSAL_POLICY_VERSION = 2
+
 class IncidentRepository:
     def __init__(self, db_path="tracelens.db"):
         self.db_path = str(db_path)
@@ -351,13 +354,15 @@ class IncidentRepository:
                     updated_at = excluded.updated_at
             """, (
                 incident_id,
-                json.dumps(proposal),
+                json.dumps({ "policy_version": FIX_PROPOSAL_POLICY_VERSION,
+    "result": proposal,}),
                 timestamp,
                 timestamp,
             ))
 
+    
     def get_fix_proposal(self, incident_id: str):
-        """Retrieve a previously saved fix proposal."""
+        """Retrieve a proposal generated under the current policy."""
 
         with self.connect() as conn:
             row = conn.execute("""
@@ -369,7 +374,33 @@ class IncidentRepository:
             if row is None:
                 return None
 
-            return json.loads(row["proposal_json"])
+            try:
+                stored = json.loads(row["proposal_json"])
+            except (TypeError, ValueError):
+                return None
+
+            if not isinstance(stored, dict):
+                return None
+
+            if stored.get("policy_version") != (
+                FIX_PROPOSAL_POLICY_VERSION
+            ):
+                return None
+
+            result = stored.get("result")
+
+            if not isinstance(result, dict):
+                return None
+
+            if (
+                result.get("incident_id") != incident_id
+                or result.get("status") != "proposed"
+                or result.get("requires_human_review") is not True
+            ):
+                return None
+
+            return result
+
 
     def delete_fix_proposal(self, incident_id: str):
         """Invalidate a saved fix proposal."""

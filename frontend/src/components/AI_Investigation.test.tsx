@@ -3,12 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 import AIInvestigation from "./AI_Investigation";
 import { api, type VerificationResult } from "../services/api";
 
-vi.mock("../services/api", () => ({
-  api: {
-    getInvestigation: vi.fn(),
-    runInvestigation: vi.fn(),
-  },
-}));
+
+vi.mock("../services/api", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../services/api")>();
+
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getInvestigation: vi.fn(),
+      runInvestigation: vi.fn(),
+    },
+  };
+});
+
 
 const sampleReport: VerificationResult = {
   report: {
@@ -180,6 +189,60 @@ it("ignores an old investigation after switching incidents", async () => {
   fireEvent.click(evidenceButton);
 
   expect(onEvidenceSelect).toHaveBeenCalledExactlyOnceWith(2);
+  });
+
+
+  it("notifies the parent when an investigation reruns", async () => {
+    const onStarted = vi.fn();
+    const onFinished = vi.fn();
+
+    vi.mocked(api.getInvestigation).mockResolvedValue(sampleReport);
+    vi.mocked(api.runInvestigation).mockResolvedValue(sampleReport);
+
+    render(
+      <AIInvestigation
+        incidentId="incident-1"
+        onInvestigationStarted={onStarted}
+        onInvestigationFinished={onFinished}
+      />
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Run Again" })
+    );
+
+    expect(onStarted).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
+  });
+
+  it("notifies the parent on investigation failure", async () => {
+    const onStarted = vi.fn();
+    const onFinished = vi.fn();
+
+    vi.mocked(api.getInvestigation).mockResolvedValue(null);
+    vi.mocked(api.runInvestigation).mockRejectedValue(
+      new Error("Backend failed")
+    );
+
+    render(
+      <AIInvestigation
+        incidentId="incident-1"
+        onInvestigationStarted={onStarted}
+        onInvestigationFinished={onFinished}
+      />
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Run Investigation",
+      })
+    );
+
+    expect(onStarted).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Backend failed"
+    );
   });
 
 });

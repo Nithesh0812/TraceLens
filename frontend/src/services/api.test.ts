@@ -70,4 +70,108 @@ describe("API error handling", () => {
       api.getInvestigation("incident-1")
     ).resolves.toBeNull();
   });
+
+  it("retrieves a saved fix proposal", async () => {
+    const savedProposal = {
+      incident_id: "incident-1",
+      status: "proposed",
+      proposal: {
+        title: "Investigate database connectivity",
+        description: "Review database connection failures.",
+        rationale: "Connection failures may contribute to errors.",
+        confidence: "medium",
+        risk_level: "low",
+        evidence_ids: [1],
+        proposed_steps: ["Inspect connection pool metrics"],
+        validation_steps: ["Check HTTP error rates"],
+        rollback_steps: ["Restore previous settings"],
+      },
+      warnings: ["Human review required"],
+      requires_human_review: true,
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(savedProposal), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        })
+      )
+    );
+
+    const result = await api.getFixProposal("incident-1");
+
+    expect(result).toEqual(savedProposal);
+  });
+
+  it("returns null when no fix proposal exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "No fix proposal found",
+          }),
+          { status: 404 }
+        )
+      )
+    );
+
+    await expect(
+      api.getFixProposal("incident-1")
+    ).resolves.toBeNull();
+  });
+
+  it("generates a fix proposal using POST", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          incident_id: "incident-1",
+          status: "needs_more_evidence",
+          proposal: null,
+          warnings: [],
+          requires_human_review: true,
+        }),
+        { status: 200 }
+      )
+    );
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await api.generateFixProposal("incident-1");
+
+    expect(result.status).toBe("needs_more_evidence");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/incidents/incident-1/propose-fix",
+      expect.objectContaining({
+        method: "POST",
+      })
+    );
+  });
+
+  it("handles a missing investigation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "Incident must be investigated first",
+          }),
+          { status: 409 }
+        )
+      )
+    );
+
+    await expect(
+      api.generateFixProposal("incident-1")
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Incident must be investigated first",
+    });
+  });
+
 });

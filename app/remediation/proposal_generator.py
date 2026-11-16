@@ -47,6 +47,20 @@ Confidence must not exceed the verified investigation
 confidence.
 
 Every evidence ID must come from the verified investigation.
+
+
+Additional safety constraints:
+- Recommend diagnostic checks before operational changes.
+- Do not prescribe numerical configuration adjustments.
+- Do not recommend changing connection pool sizes,
+  worker counts, replicas, timeouts, or system limits.
+- Do not recommend restarting, deploying, or modifying
+  running services.
+- Do not claim that correlated logs establish causation.
+- Explain what additional measurements are needed
+  before a configuration change can be justified.
+- Keep all recommendations advisory and non-executable.
+
 """
 
 
@@ -148,7 +162,54 @@ class FixProposalGenerator:
             ],
         }
 
-        schema = FixProposal.model_json_schema()
+        
+        # Groq-compatible strict JSON schema.
+        # All properties must be required.
+        schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "rationale": {"type": "string"},
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                },
+                "risk_level": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                },
+                "evidence_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                },
+                "proposed_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "validation_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "rollback_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": [
+                "title",
+                "description",
+                "rationale",
+                "confidence",
+                "risk_level",
+                "evidence_ids",
+                "proposed_steps",
+                "validation_steps",
+                "rollback_steps",
+            ],
+            "additionalProperties": False,
+        }
+
 
         payload = {
             "model": self.model,

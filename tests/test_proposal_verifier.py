@@ -164,3 +164,68 @@ def test_context_mismatch_rejected():
 
     assert result.status == "needs_more_evidence"
     assert result.proposal is None
+
+
+def test_unsupported_pool_increase_rejected():
+    proposal = make_proposal().model_copy(
+        update={
+            "proposed_steps": [
+                "Increase connection pool size by 20%"
+            ]
+        }
+    )
+
+    result = verify(proposal)
+
+    assert result.status == "needs_more_evidence"
+    assert result.proposal is None
+
+
+def test_service_restart_rejected():
+    proposal = make_proposal().model_copy(
+        update={
+            "proposed_steps": [
+                "Restart the production application"
+            ]
+        }
+    )
+
+    result = verify(proposal)
+
+    assert result.status == "needs_more_evidence"
+    assert result.proposal is None
+
+
+def test_unverified_causation_rejected():
+    proposal = make_proposal().model_copy(
+        update={
+            "rationale": (
+                "HTTP 500 errors were caused by "
+                "database connection exhaustion."
+            )
+        }
+    )
+
+    result = verify(proposal)
+
+    assert result.status == "needs_more_evidence"
+    assert result.proposal is None
+
+
+def test_diagnostic_recommendation_allowed():
+    proposal = make_proposal().model_copy(
+        update={
+            "title": "Investigate database connections",
+            "proposed_steps": [
+                "Inspect connection pool utilization",
+                "Review database timeout metrics",
+                "Compare HTTP error timestamps",
+            ],
+        }
+    )
+
+    result = verify(proposal)
+
+    assert result.status == "proposed"
+    assert result.proposal is not None
+    assert result.requires_human_review is True

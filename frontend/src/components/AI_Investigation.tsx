@@ -9,11 +9,15 @@ import {
 interface AIInvestigationProps {
   incidentId: string;
   onEvidenceSelect?: (evidenceId: number) => void;
+  onInvestigationStarted?: () => void;
+  onInvestigationFinished?: () => void;
 }
 
 export default function AIInvestigation({
   incidentId,
   onEvidenceSelect,
+  onInvestigationStarted,
+  onInvestigationFinished,
 }: AIInvestigationProps) {
   const [investigation, setInvestigation] =
     useState<VerificationResult | null>(null);
@@ -67,6 +71,7 @@ export default function AIInvestigation({
 
     setRunning(true);
     setError(null);
+    onInvestigationStarted?.();
 
     try {
       const result = await api.runInvestigation(
@@ -104,6 +109,7 @@ export default function AIInvestigation({
     } finally {
       if (!controller.signal.aborted) {
         setRunning(false);
+        onInvestigationFinished?.();
       }
 
       if (runController.current === controller) {

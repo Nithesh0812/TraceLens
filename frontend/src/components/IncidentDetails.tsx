@@ -1,5 +1,9 @@
-import AIInvestigation from "./AI_Investigation";
+
 import { useEffect, useState } from "react";
+
+import AIInvestigation from "./AI_Investigation";
+import AIFixProposal from "./AI_FixProposal";
+
 import {
   api,
   type IncidentDetails as IncidentDetailsType,
@@ -32,16 +36,33 @@ function formatMetric(value: number, type: string) {
   return value.toString();
 }
 
-export default function IncidentDetails({
+export default function IncidentDetails(props: IncidentDetailsProps) {
+  return <IncidentDetailsContent key={props.incidentId} {...props} />;
+}
+
+function IncidentDetailsContent({
   incidentId,
   onClose,
 }: IncidentDetailsProps) {
+  // Incident state
   const [incident, setIncident] =
     useState<IncidentDetailsType | null>(null);
 
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState<string | null>(null);
-  const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<number | null>(null);
+
+  // Evidence navigation
+  const [highlightedEvidenceId, setHighlightedEvidenceId] =
+    useState<number | null>(null);
+
+  // Investigation and proposal synchronization
+  const [investigationRunning, setInvestigationRunning] =
+    useState(false);
+
+  const [proposalRevision, setProposalRevision] =
+    useState(0);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -79,19 +100,33 @@ export default function IncidentDetails({
   }, [incidentId]);
 
   function handleEvidenceSelect(evidenceId: number) {
-  const element = document.getElementById(
-    `evidence-${incidentId}-${evidenceId}`
-  );
+    const element = document.getElementById(
+      `evidence-${incidentId}-${evidenceId}`
+    );
 
-  if (!element) return;
+    if (!element) return;
 
-  setHighlightedEvidenceId(evidenceId);
+    setHighlightedEvidenceId(evidenceId);
 
-  element.scrollIntoView({
-    behavior: "smooth",
-    block: "center",
-  });
+    element.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
   }
+
+  function handleInvestigationStarted() {
+    // Hide the previous fix proposal immediately.
+    setInvestigationRunning(true);
+  }
+
+  function handleInvestigationFinished() {
+    // Allow the proposal panel to reload its saved state.
+    setInvestigationRunning(false);
+
+    // Incrementing the revision remounts AIFixProposal.
+    setProposalRevision((revision) => revision + 1);
+  }
+
   return (
     <section
       aria-label="Incident details"
@@ -125,6 +160,7 @@ export default function IncidentDetails({
 
       {incident && (
         <div className="space-y-6">
+          {/* Incident overview */}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-lg font-semibold capitalize">
@@ -151,6 +187,7 @@ export default function IncidentDetails({
             </p>
           </div>
 
+          {/* Incident metrics */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <InfoCard
               label="Severity"
@@ -176,6 +213,7 @@ export default function IncidentDetails({
             />
           </div>
 
+          {/* Incident timestamps */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <InfoCard
               label="Detected At"
@@ -193,9 +231,11 @@ export default function IncidentDetails({
             />
           </div>
 
+          {/* Correlated log evidence */}
           <div>
             <h3 className="mb-4 text-lg font-semibold">
               Correlated Log Evidence
+
               <span className="ml-2 text-sm font-normal text-slate-400">
                 ({incident.correlated_log_count})
               </span>
@@ -207,6 +247,7 @@ export default function IncidentDetails({
                   No correlated log evidence is available
                   for this incident.
                 </p>
+
                 <p className="mt-2 text-xs text-slate-500">
                   This does not mean that no application
                   errors occurred.
@@ -256,11 +297,37 @@ export default function IncidentDetails({
             )}
           </div>
 
+          {/* AI Investigation */}
           <AIInvestigation
             key={incidentId}
             incidentId={incidentId}
             onEvidenceSelect={handleEvidenceSelect}
+            onInvestigationStarted={handleInvestigationStarted}
+            onInvestigationFinished={handleInvestigationFinished}
           />
+
+          {/* AI Fix Proposal */}
+          {investigationRunning ? (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-800 bg-amber-950/20 p-5"
+            >
+              <p className="text-sm font-semibold text-amber-400">
+                AI Investigation in Progress
+              </p>
+
+              <p className="mt-2 text-sm text-slate-300">
+                Fix proposals are temporarily hidden while
+                the incident is being re-investigated.
+              </p>
+            </div>
+          ) : (
+            <AIFixProposal
+              key={`${incidentId}-${proposalRevision}`}
+              incidentId={incidentId}
+              onEvidenceSelect={handleEvidenceSelect}
+            />
+          )}
         </div>
       )}
     </section>

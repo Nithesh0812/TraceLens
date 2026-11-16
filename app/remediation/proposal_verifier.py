@@ -40,6 +40,34 @@ COMPILED_UNSAFE_PATTERNS = [
     for pattern in UNSAFE_PATTERNS
 ]
 
+# Until TraceLens can verify actual system configuration,
+# do not recommend changes to operational capacity.
+CONFIG_CHANGE_PATTERN = re.compile(
+    r"\b(?:increase|decrease|raise|lower|expand|reduce|"
+    r"resize|scale|set|change|adjust|modify|tune)\b"
+    r"[^.\n]{0,120}"
+    r"\b(?:pool(?:\s+size)?|connections?|workers?|"
+    r"replicas?|threads?|timeouts?|limits?|capacity)\b",
+    re.IGNORECASE,
+)
+
+# Do not prescribe live operational actions.
+LIVE_ACTION_PATTERN = re.compile(
+    r"\b(?:restart|reboot|redeploy|deploy|"
+    r"rollout|roll\s+back|execute|apply)\b",
+    re.IGNORECASE,
+)
+
+# The available log citations establish observations,
+# not independently confirmed causation.
+CAUSAL_CLAIM_PATTERN = re.compile(
+    r"\b(?:caused by|directly caused|"
+    r"proves? that|confirmed root cause|"
+    r"definitively caused)\b",
+    re.IGNORECASE,
+)
+
+
 
 class FixProposalVerifier:
     """
@@ -154,6 +182,37 @@ class FixProposalVerifier:
                     "Proposal contains potentially "
                     "unsafe remediation instructions."
                 )
+
+        # Proposed actions must remain diagnostic,
+        # not operational configuration changes.
+        action_text = "\n".join(
+            proposal.proposed_steps
+        )
+
+        if CONFIG_CHANGE_PATTERN.search(action_text):
+            return abstain(
+                "The proposal recommends configuration "
+                "changes without verified system capacity."
+            )
+
+        if LIVE_ACTION_PATTERN.search(action_text):
+            return abstain(
+                "The proposal recommends an operational "
+                "action that requires additional validation."
+            )
+
+        # Check generated claims separately from actions.
+        explanation_text = "\n".join([
+            proposal.title,
+            proposal.description,
+            proposal.rationale,
+        ])
+
+        if CAUSAL_CLAIM_PATTERN.search(explanation_text):
+            return abstain(
+                "The proposal states an unverified "
+                "causal conclusion."
+            )
 
         # Never elevate confidence beyond the
         # verified investigation.
