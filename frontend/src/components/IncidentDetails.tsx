@@ -1,6 +1,5 @@
-
+import AIInvestigation from "./AI_Investigation";
 import { useEffect, useState } from "react";
-
 import {
   api,
   type IncidentDetails as IncidentDetailsType,
@@ -238,16 +237,10 @@ export default function IncidentDetails({
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-            <h3 className="font-semibold">
-              AI Investigation
-            </h3>
-
-            <p className="mt-2 text-sm text-slate-400">
-              Investigation results and proposed fixes
-              will be displayed here in Phase 7.5.
-            </p>
-          </div>
+          <AIInvestigation
+            key={incidentId}
+            incidentId={incidentId}
+          />
         </div>
       )}
     </section>

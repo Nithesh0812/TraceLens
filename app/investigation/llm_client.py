@@ -1,4 +1,4 @@
-
+import logging
 import json
 import os
 from typing import Literal
@@ -227,6 +227,22 @@ class LLMInvestigator:
             TypeError,
             ValidationError,
         ) as exc:
+            logging.exception(
+        "LLM investigation failed: %s",
+        type(exc).__name__,
+            )
+
+            if isinstance(exc, httpx.HTTPStatusError):
+                logging.error(
+            "LLM provider status: %s",
+            exc.response.status_code,
+                )
+
+                logging.error(
+            "LLM provider response: %.500s",
+            exc.response.text,
+                )
+
             raise LLMInvestigationError(
                 "LLM investigation request failed or "
                 "returned an invalid report"

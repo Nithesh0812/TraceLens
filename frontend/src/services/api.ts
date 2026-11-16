@@ -34,6 +34,24 @@ export interface IncidentDetails extends Incident {
   correlated_log_count: number;
 }
 
+
+export interface InvestigationReport {
+  summary: string;
+  possible_cause: string | null;
+  confidence: "low" | "medium" | "high";
+  evidence_ids: number[];
+  next_steps: string[];
+  insufficient_evidence: boolean;
+}
+
+export interface VerificationResult {
+  report: InvestigationReport;
+  citation_ids_valid: boolean;
+  verified_evidence_ids: number[];
+  warnings: string[];
+  requires_human_review: boolean;
+}
+
 export interface IncidentListResponse {
   incidents: Incident[];
   total: number;
@@ -44,6 +62,24 @@ async function getJson<T>(path: string): Promise<T> {
 
   if (!response.ok) {
     throw new Error(`API request failed: ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+
+async function postJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `API request failed: ${response.status}`
+    );
   }
 
   return response.json() as Promise<T>;
@@ -61,5 +97,30 @@ export const api = {
   getIncident: (id: string) =>
     getJson<IncidentDetails>(
       `/incidents/${encodeURIComponent(id)}`
+    ),
+  
+  getInvestigation: async (
+    incidentId: string
+  ): Promise<VerificationResult | null> => {
+    const response = await fetch(
+      `${API_BASE_URL}/incidents/${encodeURIComponent(incidentId)}/investigation`
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to retrieve investigation: ${response.status}`
+      );
+    }
+
+    return response.json() as Promise<VerificationResult>;
+  },
+
+  runInvestigation: (incidentId: string) =>
+    postJson<VerificationResult>(
+      `/incidents/${encodeURIComponent(incidentId)}/investigate`
     ),
 };
