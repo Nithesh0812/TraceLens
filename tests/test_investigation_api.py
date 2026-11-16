@@ -190,3 +190,54 @@ def test_invalid_citation_rejected(setup_api, monkeypatch):
     )
 
     assert response.status_code == 502
+
+
+def test_investigation_saved_and_retrievable(
+    setup_api, monkeypatch
+):
+    client, repository, incident = setup_api
+
+    evidence_id = add_evidence(repository, incident)
+
+    def mock_investigate(self, context):
+        return InvestigationReport(
+            summary="Elevated HTTP errors detected.",
+            possible_cause="Possible database connectivity issue",
+            confidence="high",
+            evidence_ids=[evidence_id],
+            next_steps=["Inspect database connectivity"],
+            insufficient_evidence=False,
+        )
+
+    monkeypatch.setattr(
+        api.LLMInvestigator,
+        "investigate",
+        mock_investigate,
+    )
+
+    # Generate and persist the investigation.
+    post_response = client.post(
+        f"/incidents/{incident['id']}/investigate"
+    )
+
+    assert post_response.status_code == 200
+
+    # Verify that the report was saved in SQLite.
+    saved_report = repository.get_investigation(
+        incident["id"]
+    )
+
+    assert saved_report is not None
+    assert saved_report == post_response.json()
+
+    # Retrieve it through the dashboard API.
+    get_response = client.get(
+        f"/incidents/{incident['id']}/investigation"
+    )
+
+    assert get_response.status_code == 200
+    assert get_response.json() == post_response.json()
+
+    # The verifier must cap unsupported high confidence.
+    assert get_response.json()["report"]["confidence"] == "medium"
+    assert get_response.json()["requires_human_review"] is True

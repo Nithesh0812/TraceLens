@@ -236,9 +236,9 @@ def investigate_incident(incident_id: str):
             detail="Investigation verification failed",
         ) from exc
 
-        repository.save_investigation(
-        incident_id=incident_id,
-        report=result.model_dump(mode="json"),
+    repository.save_investigation(
+    incident_id=incident_id,
+    report=result.model_dump(mode="json"),
     )
 
     return result
