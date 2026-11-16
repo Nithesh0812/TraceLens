@@ -1,17 +1,19 @@
-
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   api,
+  ApiError,
   type VerificationResult,
 } from "../services/api";
 
 interface AIInvestigationProps {
   incidentId: string;
+  onEvidenceSelect?: (evidenceId: number) => void;
 }
 
 export default function AIInvestigation({
   incidentId,
+  onEvidenceSelect,
 }: AIInvestigationProps) {
   const [investigation, setInvestigation] =
     useState<VerificationResult | null>(null);
@@ -20,54 +22,93 @@ export default function AIInvestigation({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const runController = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    let active = true;
 
-    setInvestigation(null);
-    setLoading(true);
-    setError(null);
-
-    api.getInvestigation(incidentId)
+    api
+      .getInvestigation(incidentId, controller.signal)
       .then((result) => {
-        if (!cancelled) {
+        if (active && !controller.signal.aborted) {
           setInvestigation(result);
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Unable to load investigation"
-          );
-        }
+        if (!active || controller.signal.aborted) return;
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load investigation"
+        );
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (active && !controller.signal.aborted) {
+          setLoading(false);
+        }
       });
 
     return () => {
-      cancelled = true;
+      active = false;
+      controller.abort();
+      runController.current?.abort();
     };
   }, [incidentId]);
 
   async function handleInvestigate() {
     if (running) return;
 
+    runController.current?.abort();
+
+    const controller = new AbortController();
+    runController.current = controller;
+
     setRunning(true);
     setError(null);
 
     try {
-      const result = await api.runInvestigation(incidentId);
-      setInvestigation(result);
-    } catch (err: unknown) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Investigation failed"
+      const result = await api.runInvestigation(
+        incidentId,
+        controller.signal
       );
+
+      if (!controller.signal.aborted) {
+        setInvestigation(result);
+      }
+    } catch (err: unknown) {
+      if (controller.signal.aborted) return;
+
+      if (err instanceof ApiError) {
+        if (err.status === 503) {
+          setError(
+            "AI provider is not configured or is temporarily unavailable."
+          );
+        } else if (err.status === 502) {
+          setError(
+            "AI investigation failed. Check the provider logs and try again."
+          );
+        } else if (err.status === 404) {
+          setError("This incident could not be found.");
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Investigation failed"
+        );
+      }
     } finally {
-      setRunning(false);
+      if (!controller.signal.aborted) {
+        setRunning(false);
+      }
+
+      if (runController.current === controller) {
+        runController.current = null;
+      }
     }
   }
 
@@ -86,6 +127,7 @@ export default function AIInvestigation({
           <h3 className="text-lg font-semibold">
             AI Investigation
           </h3>
+
           <p className="mt-1 text-xs text-slate-500">
             Evidence-aware incident analysis
           </p>
@@ -123,6 +165,7 @@ export default function AIInvestigation({
           className="mt-5 rounded-lg border border-red-900 bg-red-950/30 p-4 text-sm text-red-400"
         >
           {error}
+
           <p className="mt-2 text-xs">
             Verify backend connectivity and LLM configuration.
           </p>
@@ -134,6 +177,7 @@ export default function AIInvestigation({
           <p className="text-sm text-slate-400">
             No saved investigation is available.
           </p>
+
           <p className="mt-2 text-xs text-slate-500">
             Select Run Investigation to analyze this incident.
           </p>
@@ -147,6 +191,7 @@ export default function AIInvestigation({
               <p className="text-sm font-semibold text-amber-400">
                 Human Review Required
               </p>
+
               <p className="mt-1 text-xs text-slate-300">
                 AI-generated findings are hypotheses and
                 should be reviewed before remediation.
@@ -159,6 +204,7 @@ export default function AIInvestigation({
               <p className="font-semibold text-amber-400">
                 Insufficient Evidence
               </p>
+
               <p className="mt-2 text-sm text-slate-300">
                 Available evidence does not establish a
                 reliable root cause.
@@ -170,6 +216,7 @@ export default function AIInvestigation({
             <h4 className="text-sm font-semibold text-slate-400">
               Investigation Summary
             </h4>
+
             <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">
               {report.summary}
             </p>
@@ -237,16 +284,18 @@ export default function AIInvestigation({
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {investigation.verified_evidence_ids.map(
-                  (id) => (
-                    <span
-                      key={id}
-                      className="rounded-md border border-slate-700 px-3 py-1 font-mono text-xs text-slate-300"
-                    >
-                      Evidence #{id}
-                    </span>
-                  )
-                )}
+                {investigation.verified_evidence_ids.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onEvidenceSelect?.(id)}
+                    disabled={!onEvidenceSelect}
+                    className="rounded-md border border-slate-700 px-3 py-1 font-mono text-xs text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-950/30 disabled:cursor-default disabled:text-slate-400"
+                    title={`View supporting log evidence ${id}`}
+                  >
+                    Evidence #{id}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -281,7 +330,10 @@ function InfoBox({
 }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-      <p className="text-xs text-slate-500">{title}</p>
+      <p className="text-xs text-slate-500">
+        {title}
+      </p>
+
       <p className={`mt-2 font-semibold ${valueColor}`}>
         {value}
       </p>

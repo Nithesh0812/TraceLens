@@ -1,5 +1,52 @@
 const API_BASE_URL = "/api";
 
+
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+
+async function handleApiError(
+  response: Response
+): Promise<never> {
+  let detail = "";
+
+  try {
+    const body: unknown = await response.json();
+
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "detail" in body &&
+      typeof body.detail === "string"
+    ) {
+      detail = body.detail;
+    }
+  } catch {
+    // The server may return a non-JSON error.
+  }
+
+  const messages: Record<number, string> = {
+    404: "The requested resource was not found.",
+    429: "Too many requests. Please try again later.",
+    502: "The AI investigation provider failed.",
+    503: "A required backend service is unavailable.",
+  };
+
+  throw new ApiError(
+    response.status,
+    detail || messages[response.status] ||
+      `Request failed with status ${response.status}`
+  );
+}
+
 export interface MetricsSummary {
   request_rate: number | null;
   error_rate: number | null;
@@ -61,29 +108,33 @@ async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    return handleApiError(response);
   }
 
   return response.json() as Promise<T>;
 }
 
 
-async function postJson<T>(path: string): Promise<T> {
+
+async function postJson<T>(
+  path: string,
+  signal?: AbortSignal
+): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
+    signal,
   });
 
   if (!response.ok) {
-    throw new Error(
-      `API request failed: ${response.status}`
-    );
+    return handleApiError(response);
   }
 
   return response.json() as Promise<T>;
 }
+
 
 export const api = {
   getMetrics: () =>
@@ -100,27 +151,31 @@ export const api = {
     ),
   
   getInvestigation: async (
-    incidentId: string
-  ): Promise<VerificationResult | null> => {
-    const response = await fetch(
-      `${API_BASE_URL}/incidents/${encodeURIComponent(incidentId)}/investigation`
-    );
+  incidentId: string,
+  signal?: AbortSignal
+): Promise<VerificationResult | null> => {
+  const response = await fetch(
+    `${API_BASE_URL}/incidents/${encodeURIComponent(incidentId)}/investigation`,
+    { signal }
+  );
 
-    if (response.status === 404) {
-      return null;
-    }
+  if (response.status === 404) {
+    return null;
+  }
 
-    if (!response.ok) {
-      throw new Error(
-        `Failed to retrieve investigation: ${response.status}`
-      );
-    }
+  if (!response.ok) {
+    return handleApiError(response);
+  }
 
-    return response.json() as Promise<VerificationResult>;
-  },
+  return response.json() as Promise<VerificationResult>;
+},
 
-  runInvestigation: (incidentId: string) =>
-    postJson<VerificationResult>(
-      `/incidents/${encodeURIComponent(incidentId)}/investigate`
-    ),
+runInvestigation: (
+  incidentId: string,
+  signal?: AbortSignal
+) =>
+  postJson<VerificationResult>(
+    `/incidents/${encodeURIComponent(incidentId)}/investigate`,
+    signal
+  ),
 };

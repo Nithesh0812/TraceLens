@@ -41,7 +41,7 @@ export default function IncidentDetails({
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<number | null>(null);
   useEffect(() => {
     let cancelled = false;
 
@@ -78,6 +78,20 @@ export default function IncidentDetails({
     };
   }, [incidentId]);
 
+  function handleEvidenceSelect(evidenceId: number) {
+  const element = document.getElementById(
+    `evidence-${incidentId}-${evidenceId}`
+  );
+
+  if (!element) return;
+
+  setHighlightedEvidenceId(evidenceId);
+
+  element.scrollIntoView({
+    behavior: "smooth",
+    block: "center",
+  });
+  }
   return (
     <section
       aria-label="Incident details"
@@ -203,7 +217,12 @@ export default function IncidentDetails({
                 {incident.correlated_logs.map((log) => (
                   <div
                     key={log.id}
-                    className="rounded-lg border border-slate-800 bg-slate-950 p-4"
+                    id={`evidence-${incidentId}-${log.id}`}
+                    className={`scroll-mt-8 rounded-lg border bg-slate-950 p-4 transition-colors ${
+                      highlightedEvidenceId === log.id
+                        ? "border-blue-500 bg-blue-950/30"
+                        : "border-slate-800"
+                    }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span
@@ -240,6 +259,7 @@ export default function IncidentDetails({
           <AIInvestigation
             key={incidentId}
             incidentId={incidentId}
+            onEvidenceSelect={handleEvidenceSelect}
           />
         </div>
       )}
