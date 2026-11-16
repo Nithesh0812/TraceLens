@@ -9,6 +9,14 @@ from app.detection.incident_manager import IncidentManager
 from app.storage.incident_repository import IncidentRepository
 
 
+import httpx
+
+from app.services.metrics_service import (
+    get_request_rate,
+    get_error_rate,
+    get_average_latency,
+)
+
 router = APIRouter(
     prefix="/incidents",
     tags=["Incidents"],
@@ -69,6 +77,37 @@ def active_incidents():
         "incidents": repository.list_active()
     }
 
+
+@router.post("/evaluate-live")
+def evaluate_live_incidents():
+    """
+    Fetch metrics from Prometheus,
+    detect incidents, and persist lifecycle changes.
+    """
+
+    try:
+        metrics = {
+            "request_rate": get_request_rate(),
+            "error_rate": get_error_rate(),
+            "average_latency_ms": get_average_latency(),
+        }
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Prometheus metrics temporarily unavailable",
+        ) from exc
+
+    with processing_lock:
+        events = manager.process_metrics(metrics)
+
+        for event in events:
+            repository.save(event["incident"])
+
+        return {
+            "metrics": metrics,
+            "events": events,
+            "active_incidents": repository.list_active(),
+        }
 
 @router.get("/{incident_id}")
 def get_incident(incident_id: str):
