@@ -1,6 +1,6 @@
-
 import sqlite3
-
+import json
+from datetime import datetime, timezone
 from app.detection.incident_manager import ManagedIncident
 from app.detection.rules import Severity
 
@@ -72,6 +72,18 @@ class IncidentRepository:
                 CREATE INDEX IF NOT EXISTS
                 idx_evidence_incident
                 ON incident_evidence(incident_id)
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS investigations (
+                incident_id TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+
+                FOREIGN KEY (incident_id)
+                    REFERENCES incidents(id)
+                    ON DELETE CASCADE
+                )
             """)
 
     def save(self, incident: dict, evidence=None):
@@ -195,3 +207,47 @@ class IncidentRepository:
                     occurrences=row["occurrences"],
                 )
             )
+    def save_investigation(self,incident_id: str,report: dict,):
+        """Save or update a verified investigation."""
+
+        if self.get_by_id(incident_id) is None:
+            raise ValueError("Incident not found")
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        report_json = json.dumps(report)
+
+        with self.connect() as conn:
+            conn.execute("""
+                INSERT INTO investigations (
+                    incident_id,
+                    report_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+
+                ON CONFLICT(incident_id) DO UPDATE SET
+                    report_json = excluded.report_json,
+                    updated_at = excluded.updated_at
+            """, (
+                incident_id,
+                report_json,
+                timestamp,
+                timestamp,
+            ))
+
+
+    def get_investigation(self, incident_id: str):
+        """Retrieve the saved investigation for an incident."""
+
+        with self.connect() as conn:
+            row = conn.execute("""
+                SELECT report_json
+                FROM investigations
+                WHERE incident_id = ?
+            """, (incident_id,)).fetchone()
+
+            if row is None:
+                return None
+
+            return json.loads(row["report_json"])

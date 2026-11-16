@@ -1,26 +1,23 @@
-
 import os
+import logging
+import httpx
+
 from threading import Lock
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException,Query
 from pydantic import BaseModel, Field
 
 from app.detection.incident_manager import IncidentManager
 from app.storage.incident_repository import IncidentRepository
-
-import httpx
-
 from app.services.metrics_service import (get_request_rate,get_error_rate,get_average_latency,)
-import logging
-
 from app.ingestion.jobtracker_logs import read_jobtracker_logs
 from app.detection.log_correlator import correlate_logs
 from app.detection.incident_detector import Incident
 from app.detection.rules import Severity
-
 from app.investigation.context_builder import (InvestigationContextBuilder,IncidentNotFoundError,)
 from app.investigation.llm_client import (LLMInvestigator,LLMInvestigationError,)
 from app.investigation.evidence_verifier import (EvidenceVerifier,VerificationResult,)
+from app.api.schemas import IncidentListResponse
 
 router = APIRouter(
     prefix="/incidents",
@@ -102,10 +99,16 @@ def evaluate_incidents(metrics: MetricsInput):
             ) from exc
 
 
-@router.get("")
-def list_incidents():
+@router.get("", response_model=IncidentListResponse)
+def list_incidents(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    incidents = repository.list_all()
+
     return {
-        "incidents": repository.list_all()
+        "incidents": incidents[offset:offset + limit],
+        "total": len(incidents),
     }
 
 
@@ -233,4 +236,33 @@ def investigate_incident(incident_id: str):
             detail="Investigation verification failed",
         ) from exc
 
+        repository.save_investigation(
+        incident_id=incident_id,
+        report=result.model_dump(mode="json"),
+    )
+
     return result
+
+@router.get("/{incident_id}/investigation")
+def get_saved_investigation(incident_id: str):
+    """Retrieve a previously verified AI investigation."""
+
+    incident = repository.get_by_id(incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    investigation = repository.get_investigation(
+        incident_id
+    )
+
+    if investigation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No investigation found for this incident",
+        )
+
+    return investigation
